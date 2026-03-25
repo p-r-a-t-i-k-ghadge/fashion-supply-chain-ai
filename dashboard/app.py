@@ -778,15 +778,6 @@ else:
             if st.button("📋 Generate Full Report", key="full_report", use_container_width=True):
                 st.info("📄 Generating comprehensive PDF report...")
                 st.success("✅ Report ready for download!")
-
-
-        with col1:
-            category_counts = df_products['category'].value_counts()
-            fig_pie = px.pie(
-                values=category_counts.values,
-                names=category_counts.index,
-                title="Product Distribution by Category",
-                hole=0.3,
     
     # ==================== TAB 2: SINGLE PRODUCT ANALYSIS ====================
     with tab_single:
