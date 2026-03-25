@@ -9,14 +9,103 @@ import os
 import sys
 import numpy as np
 import subprocess
+from pathlib import Path
 
 API_BASE_URL = "http://127.0.0.1:8000/api/v1"
 
+# ==================== HELPER FUNCTIONS FOR MOCK DATA ====================
+@st.cache_data(ttl=300)
+def generate_dynamic_business_data():
+    """Generate realistic fashion retail business data"""
+    np.random.seed(42)
+    
+    # Customer behavior data
+    days = 30
+    dates = pd.date_range(end=datetime.now(), periods=days)
+    
+    daily_sales = np.random.randint(100000, 500000, days)  # INR
+    daily_customers = np.random.randint(50, 200, days)
+    daily_orders = np.random.randint(40, 150, days)
+    
+    # Product categories fashion-specific
+    categories = ['T-Shirts', 'Jeans', 'Dresses', 'Jackets', 'Accessories', 'Shoes']
+    category_sales = {cat: np.random.randint(50000, 300000) for cat in categories}
+    category_units = {cat: np.random.randint(20, 150) for cat in categories}
+    
+    # Customer behavior metrics
+    repeat_customers = np.random.randint(300, 800)
+    new_customers = np.random.randint(100, 400)
+    churn_rate = np.random.uniform(5, 15)
+    avg_order_value = np.random.randint(1500, 4500)
+    customer_satisfaction = np.random.uniform(4.0, 4.8)
+    
+    # Inventory metrics
+    total_inventory = np.random.randint(500, 2000)
+    low_stock_items = np.random.randint(5, 25)
+    stockout_items = np.random.randint(0, 5)
+    
+    # Returns & quality
+    return_rate = np.random.uniform(2, 8)
+    quality_issues = np.random.randint(0, 10)
+    
+    return {
+        'dates': dates,
+        'daily_sales': daily_sales,
+        'daily_customers': daily_customers,
+        'daily_orders': daily_orders,
+        'category_sales': category_sales,
+        'category_units': category_units,
+        'repeat_customers': repeat_customers,
+        'new_customers': new_customers,
+        'churn_rate': churn_rate,
+        'avg_order_value': avg_order_value,
+        'customer_satisfaction': customer_satisfaction,
+        'total_inventory': total_inventory,
+        'low_stock_items': low_stock_items,
+        'stockout_items': stockout_items,
+        'return_rate': return_rate,
+        'quality_issues': quality_issues
+    }
+
+@st.cache_data(ttl=300)
+def get_customer_segments():
+    """Generate customer segmentation data"""
+    segments = {
+        'Premium Buyers': {'count': 450, 'avg_spend': 8500, 'retention': 92},
+        'Regular Buyers': {'count': 2100, 'avg_spend': 3200, 'retention': 78},
+        'Budget Conscious': {'count': 3800, 'avg_spend': 1200, 'retention': 55},
+        'One-time Buyers': {'count': 5200, 'avg_spend': 1800, 'retention': 0}
+    }
+    return segments
+
+@st.cache_data(ttl=300)
+def get_top_products():
+    """Get top selling fashion products"""
+    products = [
+        {'name': 'Premium Cotton T-Shirt', 'sales': 850000, 'units': 450, 'rating': 4.8, 'category': 'T-Shirts'},
+        {'name': 'Slim Fit Jeans', 'sales': 720000, 'units': 320, 'rating': 4.6, 'category': 'Jeans'},
+        {'name': 'Summer Dress', 'sales': 650000, 'units': 280, 'rating': 4.7, 'category': 'Dresses'},
+        {'name': 'Leather Jacket', 'sales': 580000, 'units': 150, 'rating': 4.5, 'category': 'Jackets'},
+        {'name': 'Sports Shoes', 'sales': 520000, 'units': 220, 'rating': 4.4, 'category': 'Shoes'}
+    ]
+    return pd.DataFrame(products)
+
+@st.cache_data(ttl=300)
+def get_trend_forecast():
+    """Get 30-day sales forecast"""
+    dates = pd.date_range(end=datetime.now(), periods=30)
+    base_sales = 300000
+    trend = np.linspace(base_sales, base_sales * 1.15, 30)
+    seasonal = 50000 * np.sin(np.linspace(0, 2*np.pi, 30))
+    noise = np.random.normal(0, 20000, 30)
+    forecast = trend + seasonal + noise
+    return pd.DataFrame({'date': dates, 'forecast': forecast})
+
 # Page Configuration
 st.set_page_config(
-    page_title="Fashion Supply Chain AI Dashboard",
+    page_title="Fashion Retail Intelligence Platform",
     layout="wide",
-    page_icon="📦",
+    page_icon="👗",
     initial_sidebar_state="expanded"
 )
 
@@ -156,17 +245,17 @@ st.markdown("""
 
 # ==================== HEADER ====================
 st.markdown("""
-<div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; color: white; margin-bottom: 30px;">
-    <h1 style="font-size: 3em; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">🚀 Fashion Supply Chain AI</h1>
-    <p style="font-size: 1.2em; margin: 10px 0 0 0;">AI-Powered Inventory & Risk Management Dashboard</p>
-    <p style="font-size: 0.9em; opacity: 0.9;">Real-time Analytics | Predictive Forecasting | Risk Intelligence</p>
+<div style="text-align: center; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; color: white; margin-bottom: 30px;">
+    <h1 style="font-size: 3em; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">👗 Fashion Retail Intelligence</h1>
+    <p style="font-size: 1.2em; margin: 10px 0 0 0;">AI-Powered Analytics for Fashion E-Commerce Sellers</p>
+    <p style="font-size: 0.95em; opacity: 0.9;">🇮🇳 Customer Behavior • Sales Analytics • Inventory Optimization • Revenue Growth • ₹ INR</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Add auto-refresh indicator
 col1, col2, col3 = st.columns(3)
 with col2:
-    st.caption("🟢 Live Dashboard • Last Updated: " + datetime.now().strftime("%H:%M:%S"))
+    st.caption("🟢 Live Business Intelligence • Last Updated: " + datetime.now().strftime("%d-%b %H:%M"))
 
 # ==================== SESSION STATE ====================
 if 'data_initialized' not in st.session_state:
@@ -629,7 +718,7 @@ else:
         st.markdown("---")
 
         # CATEGORY ANALYSIS WITH INTERACTIVE CHARTS
-        st.markdown('<div class="section-header">📂 Category Analysis</div>', unsafe_html=True)
+        st.markdown('<div class="section-header">📂 Category Analysis</div>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
 
@@ -668,7 +757,7 @@ else:
         st.markdown("---")
 
         # RISK ASSESSMENT DASHBOARD
-        st.markdown('<div class="section-header">⚠️ Risk Assessment Overview</div>', unsafe_html=True)
+        st.markdown('<div class="section-header">⚠️ Risk Assessment Overview</div>', unsafe_allow_html=True)
         
         try:
             response = requests.get(f"{API_BASE_URL}/analytics/risk-overview")
@@ -734,7 +823,7 @@ else:
         st.markdown("---")
 
         # DATA EXPORT SECTION
-        st.markdown('<div class="section-header">📥 Data Export & Reports</div>', unsafe_html=True)
+        st.markdown('<div class="section-header">📥 Data Export & Reports</div>', unsafe_allow_html=True)
         
         exp1, exp2, exp3 = st.columns(3)
 
