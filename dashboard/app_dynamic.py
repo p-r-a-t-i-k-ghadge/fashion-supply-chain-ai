@@ -54,38 +54,39 @@ def load_data_from_database():
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from db.database import SessionLocal
         from db.models import Product, Sale, Inventory
-        
+
         db = SessionLocal()
-        
+
         products = db.query(Product).all()
         sales = db.query(Sale).all()
         inventory = db.query(Inventory).all()
-        
+
         db.close()
-        
-        if not products or not sales:
+
+        # Only require products - sales and inventory are optional
+        if not products:
             return None
-        
+
         # Convert to dataframes
         products_df = pd.DataFrame([
             {'id': p.id, 'sku': p.sku, 'name': p.name, 'category': p.category, 'base_price': p.base_price}
             for p in products
         ])
-        
+
         sales_df = pd.DataFrame([
             {'product_id': s.product_id, 'date': s.date, 'quantity': s.quantity, 'total_amount': s.total_amount}
             for s in sales
-        ]) if sales else None
-        
+        ]) if sales else pd.DataFrame(columns=['product_id', 'date', 'quantity', 'total_amount'])
+
         inventory_df = pd.DataFrame([
             {'product_id': i.product_id, 'date': i.date, 'stock_level': i.stock_level, 'reorder_point': i.reorder_point, 'lead_time_days': i.lead_time_days}
             for i in inventory
-        ]) if inventory else None
-        
+        ]) if inventory else pd.DataFrame(columns=['product_id', 'date', 'stock_level', 'reorder_point', 'lead_time_days'])
+
         return {'products': products_df, 'sales': sales_df, 'inventory': inventory_df}
-    
+
     except Exception as e:
-        print(f"Error loading from database: {e}")
+        st.error(f"Database error: {e}")
         return None
 
 def generate_all_analytics(data):
@@ -93,61 +94,91 @@ def generate_all_analytics(data):
     products_df = data['products']
     sales_df = data['sales']
     inventory_df = data['inventory']
-    
+
     # ========== SALES ANALYTICS ==========
-    sales_df['date'] = pd.to_datetime(sales_df['date'])
-    
-    # Total metrics
-    total_revenue = sales_df['total_amount'].sum()
-    total_quantity = sales_df['quantity'].sum()
-    total_orders = len(sales_df)
-    avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
-    
-    # Daily aggregation
-    daily_sales = sales_df.groupby('date').agg({
-        'total_amount': 'sum',
-        'quantity': 'sum'
-    }).reset_index().sort_values('date')
-    
-    daily_customers = sales_df.groupby('date').size().reset_index(name='count').sort_values('date')
+    if len(sales_df) > 0:
+        sales_df['date'] = pd.to_datetime(sales_df['date'])
+
+        # Total metrics
+        total_revenue = sales_df['total_amount'].sum()
+        total_quantity = sales_df['quantity'].sum()
+        total_orders = len(sales_df)
+        avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+
+        # Daily aggregation
+        daily_sales = sales_df.groupby('date').agg({
+            'total_amount': 'sum',
+            'quantity': 'sum'
+        }).reset_index().sort_values('date')
+
+        daily_customers = sales_df.groupby('date').size().reset_index(name='count').sort_values('date')
+    else:
+        # No sales data - use zeros
+        total_revenue = 0
+        total_quantity = 0
+        total_orders = 0
+        avg_order_value = 0
+        daily_sales = pd.DataFrame({'date': [datetime.now()], 'total_amount': [0], 'quantity': [0]})
+        daily_customers = pd.DataFrame({'date': [datetime.now()], 'count': [0]})
     
     # ========== CATEGORY ANALYTICS ==========
-    product_sales = sales_df.merge(products_df[['id', 'sku', 'name', 'category', 'base_price']], 
-                                    left_on='product_id', right_on='id', how='left')
-    
-    category_sales = product_sales.groupby('category')['total_amount'].sum().to_dict()
-    category_units = product_sales.groupby('category')['quantity'].sum().to_dict()
-    category_count = product_sales.groupby('category').size().to_dict()
-    
+    if len(sales_df) > 0 and len(products_df) > 0:
+        product_sales = sales_df.merge(products_df[['id', 'sku', 'name', 'category', 'base_price']],
+                                        left_on='product_id', right_on='id', how='left')
+
+        category_sales = product_sales.groupby('category')['total_amount'].sum().to_dict()
+        category_units = product_sales.groupby('category')['quantity'].sum().to_dict()
+        category_count = product_sales.groupby('category').size().to_dict()
+    else:
+        # No sales data - use empty dicts or default categories
+        category_sales = {}
+        category_units = {}
+        category_count = {}
+        product_sales = pd.DataFrame()
+
     # ========== TOP PRODUCTS ==========
-    product_performance = product_sales.groupby(['product_id', 'name', 'category']).agg({
-        'total_amount': 'sum',
-        'quantity': 'sum'
-    }).reset_index().sort_values('total_amount', ascending=False)
-    
-    # Generate ratings based on sales performance
-    max_sales = product_performance['total_amount'].max()
-    product_performance['rating'] = 4.0 + (product_performance['total_amount'] / max_sales) * 0.8
-    product_performance = product_performance.rename(columns={'total_amount': 'sales', 'quantity': 'units'})
-    
+    if len(product_sales) > 0:
+        product_performance = product_sales.groupby(['product_id', 'name', 'category']).agg({
+            'total_amount': 'sum',
+            'quantity': 'sum'
+        }).reset_index().sort_values('total_amount', ascending=False)
+
+        # Generate ratings based on sales performance
+        max_sales = product_performance['total_amount'].max()
+        if max_sales > 0:
+            product_performance['rating'] = 4.0 + (product_performance['total_amount'] / max_sales) * 0.8
+        else:
+            product_performance['rating'] = 4.0
+        product_performance = product_performance.rename(columns={'total_amount': 'sales', 'quantity': 'units'})
+    else:
+        # No product sales data
+        product_performance = pd.DataFrame(columns=['product_id', 'name', 'category', 'sales', 'units', 'rating'])
+
     # ========== CUSTOMER ANALYTICS ==========
-    customer_purchases = sales_df.groupby('product_id').agg({
-        'quantity': 'count',
-        'total_amount': 'sum'
-    }).reset_index()
-    customer_purchases.columns = ['product_id', 'purchase_count', 'total_spent']
-    
-    # Customer segments based on spend
-    total_spent_per_customer = sales_df.groupby('product_id')['total_amount'].sum()
-    avg_spend = total_spent_per_customer.mean()
-    
-    premium_count = len(total_spent_per_customer[total_spent_per_customer > avg_spend * 2])
-    regular_count = len(total_spent_per_customer[(total_spent_per_customer > avg_spend) & (total_spent_per_customer <= avg_spend * 2)])
-    budget_count = len(total_spent_per_customer[(total_spent_per_customer > avg_spend / 2) & (total_spent_per_customer <= avg_spend)])
-    onetime_count = len(total_spent_per_customer[total_spent_per_customer <= avg_spend / 2])
+    if len(sales_df) > 0:
+        customer_purchases = sales_df.groupby('product_id').agg({
+            'quantity': 'count',
+            'total_amount': 'sum'
+        }).reset_index()
+        customer_purchases.columns = ['product_id', 'purchase_count', 'total_spent']
+
+        # Customer segments based on spend
+        total_spent_per_customer = sales_df.groupby('product_id')['total_amount'].sum()
+        avg_spend = total_spent_per_customer.mean()
+
+        premium_count = len(total_spent_per_customer[total_spent_per_customer > avg_spend * 2])
+        regular_count = len(total_spent_per_customer[(total_spent_per_customer > avg_spend) & (total_spent_per_customer <= avg_spend * 2)])
+        budget_count = len(total_spent_per_customer[(total_spent_per_customer > avg_spend / 2) & (total_spent_per_customer <= avg_spend)])
+        onetime_count = len(total_spent_per_customer[total_spent_per_customer <= avg_spend / 2])
+    else:
+        # No customer data
+        premium_count = 0
+        regular_count = 0
+        budget_count = 0
+        onetime_count = 0
     
     # ========== INVENTORY ANALYTICS ==========
-    if inventory_df is not None and len(inventory_df) > 0:
+    if len(inventory_df) > 0:
         latest_inventory = inventory_df.sort_values('date').drop_duplicates('product_id', keep='last')
         total_stock = latest_inventory['stock_level'].sum()
         low_stock_count = len(latest_inventory[latest_inventory['stock_level'] <= latest_inventory['reorder_point']])
@@ -156,7 +187,7 @@ def generate_all_analytics(data):
         total_stock = 0
         low_stock_count = 0
         stockout_count = 0
-    
+
     # ========== CALCULATE TREND ==========
     if len(daily_sales) > 0:
         daily_sales_array = daily_sales['total_amount'].values
@@ -196,7 +227,7 @@ def generate_all_analytics(data):
         'onetime_count': onetime_count,
         'repeat_customers': premium_count + regular_count,
         'new_customers': onetime_count,
-        'churn_rate': (onetime_count / len(total_spent_per_customer) * 100) if len(total_spent_per_customer) > 0 else 0,
+        'churn_rate': (onetime_count / max(1, premium_count + regular_count + budget_count + onetime_count) * 100) if (premium_count + regular_count + budget_count + onetime_count) > 0 else 0,
         'customer_satisfaction': 4.0 + (total_orders / 1000 * 0.1),  # Based on order volume
         
         # Inventory
@@ -420,37 +451,36 @@ if db_data is not None:
     data_source = "uploaded"
 else:
     st.sidebar.info("📊 Using SAMPLE data (upload CSV to replace)")
-    biz_data = generate_all_analytics({'products': pd.DataFrame(), 'sales': pd.DataFrame(), 'inventory': pd.DataFrame()})
-    if biz_data['total_revenue'] == 0:  # Fallback to mock if no real data
-        mock_data = generate_mock_data()
-        biz_data = {
-            'total_revenue': mock_data['daily_sales'].sum(),
-            'total_quantity': sum(mock_data['daily_orders']),
-            'total_orders': len(mock_data['dates']),
-            'avg_order_value': mock_data['avg_order_value'],
-            'dates': mock_data['dates'],
-            'daily_sales': mock_data['daily_sales'],
-            'daily_customers': mock_data['daily_customers'],
-            'daily_orders': mock_data['daily_orders'],
-            'category_sales': mock_data['category_sales'],
-            'category_units': mock_data['category_units'],
-            'premium_count': 450,
-            'regular_count': 2100,
-            'budget_count': 3800,
-            'onetime_count': 5200,
-            'repeat_customers': 450,
-            'new_customers': 250,
-            'churn_rate': 8.5,
-            'customer_satisfaction': 4.6,
-            'total_stock': 1250,
-            'low_stock_count': 8,
-            'stockout_count': 2,
-            'products_count': 20,
-            'top_products': pd.DataFrame([
-                {'name': 'Premium Cotton T-Shirt', 'sales': 850000, 'units': 450, 'rating': 4.8, 'category': 'T-Shirts'},
-                {'name': 'Slim Fit Jeans', 'sales': 720000, 'units': 320, 'rating': 4.6, 'category': 'Jeans'},
-            ])
-        }
+    # Generate mock data directly instead of going through empty dataframes
+    mock_data = generate_mock_data()
+    biz_data = {
+        'total_revenue': mock_data['daily_sales'].sum(),
+        'total_quantity': sum(mock_data['daily_orders']),
+        'total_orders': len(mock_data['dates']),
+        'avg_order_value': mock_data['avg_order_value'],
+        'dates': mock_data['dates'],
+        'daily_sales': mock_data['daily_sales'],
+        'daily_customers': mock_data['daily_customers'],
+        'daily_orders': mock_data['daily_orders'],
+        'category_sales': mock_data['category_sales'],
+        'category_units': mock_data['category_units'],
+        'premium_count': 450,
+        'regular_count': 2100,
+        'budget_count': 3800,
+        'onetime_count': 5200,
+        'repeat_customers': 450,
+        'new_customers': 250,
+        'churn_rate': 8.5,
+        'customer_satisfaction': 4.6,
+        'total_stock': 1250,
+        'low_stock_count': 8,
+        'stockout_count': 2,
+        'products_count': 20,
+        'top_products': pd.DataFrame([
+            {'name': 'Premium Cotton T-Shirt', 'sales': 850000, 'units': 450, 'rating': 4.8, 'category': 'T-Shirts'},
+            {'name': 'Slim Fit Jeans', 'sales': 720000, 'units': 320, 'rating': 4.6, 'category': 'Jeans'},
+        ])
+    }
     data_source = "mock"
 
 # ==================== MAIN TABS ====================
